@@ -1,0 +1,399 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Andrey_Sha
+
+//@version=6
+strategy('RangFilt+LiqWeigh+NormalSmooth V1',
+ shorttitle = "RF+LW+NS",
+ overlay = true,
+ initial_capital = 250,
+ currency = currency.USDT,
+ pyramiding = 0,
+ default_qty_type = strategy.cash,
+ default_qty_value = 150,
+ commission_type = strategy.commission.percent,
+ commission_value = 0.05
+ )
+
+//------------------------ВХОДНЫЕ ДАННЫЕ---------------------
+
+var settings = "Общие"
+var settings1 = "Настройка индикаторов"
+var settings2 = "Настройка Входа в позицию"
+var settings3 = "Настройка SL и TP"
+
+//------------------------ИНДИКАТОРЫ B ПАТТЕРНЫ---------------------
+
+//------ Range Filter
+
+// Smooth Average Range
+src = input(defval=close, title="Range Filter-Source ", group = settings1)
+per = input.int(defval=100, minval=1, title="Range Filter-Sampling Period", group = settings1)
+mult = input.float(defval=3.0, minval=0.1, title="Range Filter-Range Multiplier", group = settings1)
+
+smoothrng(x, t, m) =>
+    wper = t * 2 - 1
+    avrng = ta.ema(math.abs(x - x[1]), t)
+    smoothrng = ta.ema(avrng, wper) * m
+    smoothrng
+smrng = smoothrng(src, per, mult)
+
+// Range Filter
+rngfilt(x, r) =>
+    rngfilt = x
+    rngfilt := x > nz(rngfilt[1]) ? x - r < nz(rngfilt[1]) ? nz(rngfilt[1]) : x - r : 
+       x + r > nz(rngfilt[1]) ? nz(rngfilt[1]) : x + r
+    rngfilt
+filt = rngfilt(src, smrng)
+
+// Filter Direction
+upward = 0.0
+upward := filt > filt[1] ? nz(upward[1]) + 1 : filt < filt[1] ? 0 : nz(upward[1])
+downward = 0.0
+downward := filt < filt[1] ? nz(downward[1]) + 1 : filt > filt[1] ? 0 : nz(downward[1])
+
+// Target Bands
+hband = filt + smrng
+lband = filt - smrng
+
+// Break Outs
+longCond = bool(na)
+shortCond = bool(na)
+longCond := src > filt and src > src[1] and upward > 0 or 
+   src > filt and src < src[1] and upward > 0
+shortCond := src < filt and src < src[1] and downward > 0 or 
+   src < filt and src > src[1] and downward > 0
+
+CondIni = 0
+CondIni := longCond ? 1 : shortCond ? -1 : CondIni[1]
+
+//------ Liquidity Weighted Moving Averages
+
+// Define liquidity based on volume and price movement
+priceMovementLiquidity = volume / math.abs(close - open)
+outlierThreshold = input.int(10, "LWMA - Outlier Threshold Length", group = settings1)
+fastMovingAverageLength = input.int(100, "LWMA - Fast MA length", group = settings1)
+slowMovingAverageLength = input.int(200, "LWMA - Slow MA length", group = settings1)
+
+// Calculate the boundary for liquidity to identify outliers
+liquidityBoundary = ta.ema(priceMovementLiquidity, outlierThreshold) + ta.stdev(priceMovementLiquidity, outlierThreshold)
+
+// Initialize an array to store liquidity values when they cross the boundary
+var liquidityValues = array.new_float(5)
+
+// Check if the liquidity crosses above the boundary and update the array
+if ta.crossover(priceMovementLiquidity, liquidityBoundary)
+    array.insert(liquidityValues, 0, close)
+
+// Calculate the Exponential Moving Averages for the close price at the last liquidity crossover
+fastEMA = ta.ema(array.get(liquidityValues, 0), fastMovingAverageLength)
+slowEMA = ta.ema(array.get(liquidityValues, 0), slowMovingAverageLength)
+
+//------ Normalized Smooted MACD
+inpFastPeriod = input.int(defval = 12, title = "NSMACD fast period", minval = 1, group = settings1) 
+inpSlowPeriod = input.int(defval = 26, title = "NSMACD slow period", minval = 1, group = settings1) 
+inpMacdSignal = input.int(defval = 9, title = "NSMACD Signal period", minval = 1, group = settings1) 
+inpSmoothPeriod = input.int(defval = 5, title = "NSMACD Smoothing period", minval = 1, group = settings1)
+inpNormPeriod = input.int(defval = 20, title = "NSMACD Normalization period", minval =1, group = settings1)
+price = input.source(close, title = "NSMACD Price Source", group = settings1)
+
+emaf = 0.0
+emas = 0.0 
+val  = 0.0
+nval = 0.0
+sig  = 0.0
+
+if bar_index > inpSlowPeriod 
+    alphaf = 2.0 / (1.0 + math.max(inpFastPeriod,1))
+    alphas = 2.0 / (1.0 + math.max(inpSlowPeriod,1))
+    alphasig = 2.0 / (1.0 + math.max(inpMacdSignal,1))
+    alphasm = 2.0 / (1.0 + math.max(inpSmoothPeriod,1))
+    
+    emaf := emaf[1] + alphaf * (price - emaf[1])
+    emas := emas[1] + alphas * (price - emas[1])
+    imacd = emaf - emas
+    
+    mmax = ta.highest(imacd, inpNormPeriod)
+    mmin = ta.lowest(imacd, inpNormPeriod)
+    if mmin != mmax 
+        nval := 2.0 * (imacd - mmin) / (mmax - mmin) - 1.0 
+    else
+        nval := 0
+    
+    val := val[1] + alphasm * (nval - val[1])
+    sig := sig[1] + alphasig * (val - sig[1])
+//
+//plot(val, color=val>val[1]?green:red, style=plot.style_line, linewidth=2, title="Reg smooth MACD")
+//plot(sig, color=black, style=plot.style_cross, linewidth=1, title="Signal line")
+//hline(0, title='0', color=color.gray, linestyle=hline.style_dotted, linewidth=1)
+//
+//alertcondition(ta.crossunder(val,sig),title="Sell",message="Sell")
+//alertcondition(ta.crossover(val,sig),title="Buy",message="Buy")
+//alertcondition(ta.crossunder(val,sig) or ta.crossover(val,sig) ,title="Sell/Buy",message="Sell/Buy")
+
+//------------------------РАСЧЕТЫ ВХОД/SL/TP---------------------
+
+//------ Вход в позицию
+enter = strategy.position_avg_price
+
+rangeFilter = input.bool(true, title = "Range Filter", group = settings2)
+LWMA = input.bool(true, title = "Liquidity Weighted Moving Averages", group = settings2)
+nsMACD = input.bool(true, title = "Normalized Smooted MACD", group = settings2)
+
+bool longCondition = false
+bool shortCondition = false
+
+if rangeFilter == true
+    longCondition := longCond and CondIni[1] == -1
+    shortCondition := shortCond and CondIni[1] == 1
+
+if LWMA == true
+    longCondition := fastEMA > slowEMA and close > fastEMA
+    shortCondition := fastEMA < slowEMA and close < fastEMA
+
+if nsMACD == true
+    longCondition := val > val[1]
+    shortCondition := val < val[1]
+
+if rangeFilter == true and LWMA == true
+    longCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA
+    shortCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA
+
+if rangeFilter == true and nsMACD == true
+    longCondition := longCond and CondIni[1] == -1 and val > val[1]
+    shortCondition := shortCond and CondIni[1] == 1 and val < val[1]
+
+if LWMA == true and nsMACD == true
+    longCondition := fastEMA > slowEMA and close > fastEMA and val > val[1]
+    shortCondition := fastEMA < slowEMA and close < fastEMA and val < val[1]
+
+if rangeFilter == true and LWMA == true and nsMACD == true
+    longCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA and val > val[1]
+    shortCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA and val < val[1]
+
+//Переворот логики входа
+overturn = input.bool(false, title = "Переворот логики входа", group = settings2)
+if overturn == true
+    longCondition := shortCondition
+    shortCondition := longCondition
+    
+//------ Расчеты SL и TP
+
+//Входные данные
+var SL = 0.0
+var TP = 0.0
+var TP1 = 0.0
+var TP2 = 0.0
+var TP3 = 0.0
+
+SLTPtype = input.string(title = "Тип SL/TP", defval = "FixSL + TP", 
+ options = ["FixSL + TP", "FixSL + MultiTP", "TrailSL + TP", "TrailSL + MultiTP", "OnlyTrailSL"], 
+ group = settings3
+ )
+riskReward = input.float(title = "Соотношение Риск:Прибыль", defval = 1.0, step = 0.1, group = settings3)
+reserveSL = input.float(title = "Запас Стоплоса под min или над max", defval = 1.0, step = 0.001, group = settings3)
+quantityTP = input.string(title = "Количество TP", defval = "2", options = ["2", "3"], group = settings3)
+
+qtyPercent = input.float(30, title = "QTY for TP1 (%)", group = settings3,
+ tooltip = "Position fixed percentage for TP1. The second TP closes the rest of the position"
+ )
+
+// ------ канал min/max за определенный период для определения SL
+rangeMinMax = input.int (50, "Количество предыдущих баров, для определения min/max", group = settings3)
+
+lowerBand = ta.lowest(low, rangeMinMax)
+upperBand = ta.highest(high, rangeMinMax)
+
+prevLowerBand = nz(lowerBand[1])
+prevUpperBand = nz(upperBand[1])
+
+lowerBandForTrail = lowerBand > prevLowerBand  or close[1] < prevLowerBand ? lowerBand : prevLowerBand
+upperBandForTrail = upperBand < prevUpperBand or close[1] > prevUpperBand ? upperBand : prevUpperBand
+
+// ------ Fix SL
+longFixSL = lowerBand - lowerBand * (reserveSL - 1)
+shortFixSL = upperBand + lowerBand * (reserveSL - 1)
+
+// ------ Trail Stop Stop Loss and Take Profit Calculations
+longTrailSL = lowerBandForTrail
+shortTrailSL = upperBandForTrail
+
+// ------ Обычный TP
+longTP = close + ((close - longFixSL) * riskReward)
+shortTP = close - ((shortFixSL - close) * riskReward)
+
+// ------ Multiple TP
+longTP1 = close + (close - longFixSL) * riskReward
+longTP2 = close + (close - longFixSL) * riskReward * 2
+longTP3 = close + (close - longFixSL) * riskReward * 3
+shortTP1 = close - (shortFixSL - close) * riskReward
+shortTP2 = close - (shortFixSL - close) * riskReward * 2
+shortTP3 = close - (shortFixSL - close) * riskReward * 3
+
+
+//------------------------УПРАВЛЕНИЕ ПОЗИЦИЕЙ---------------------
+
+//FixSL + TP
+if SLTPtype == "FixSL + TP"
+    if (longCondition or shortCondition) and strategy.position_size == 0
+        SL := longCondition ? longFixSL : shortFixSL
+        TP := longCondition ? longTP : shortTP
+        strategy.entry(longCondition ? "Long" : "Short", longCondition ? strategy.long : strategy.short)
+        strategy.exit(id = "Long Exit", from_entry = "Long", limit = TP, stop = SL)
+        strategy.exit(id = "Short Exit", from_entry = "Short", limit = TP, stop = SL) 
+
+//FixSL + MultiTP
+if SLTPtype == "FixSL + MultiTP"
+    if (longCondition or shortCondition) and strategy.position_size == 0
+        SL := longCondition ? longFixSL : shortFixSL
+        TP1 := longCondition ? longTP1 : shortTP1
+        strategy.entry(longCondition ? "Long" : "Short", longCondition ? strategy.long : strategy.short)
+        if quantityTP == "2"
+            TP2 := longCondition ? longTP2 : shortTP2
+            strategy.exit(id = "Long Exit 1", from_entry = "Long", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 2", from_entry = "Long", limit = TP2, stop = SL)
+            strategy.exit(id = "Short Exit 1", from_entry = "Short", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 2", from_entry = "Short", limit = TP2, stop = SL)
+        if quantityTP == "3"
+            TP2 := longCondition ? longTP2 : shortTP2
+            TP3 := longCondition ? longTP3 : shortTP3
+            strategy.exit(id = "Long Exit 1", from_entry = "Long", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 2", from_entry = "Long", limit = TP2, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 3", from_entry = "Long", limit = TP3, stop = SL)
+            strategy.exit(id = "Short Exit 1", from_entry = "Short", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 2", from_entry = "Short", limit = TP2, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 3", from_entry = "Short", limit = TP3, stop = SL)
+
+//TrailSL + TP
+if SLTPtype == "TrailSL + TP"
+    if (longCondition or shortCondition) and strategy.position_size == 0
+        strategy.entry(longCondition ? "Long" : "Short", longCondition ? strategy.long : strategy.short)
+        TP := longCondition ? longTP : shortTP
+    if strategy.position_size > 0
+        SL := longFixSL
+        if lowerBand > SL
+            SL := lowerBand
+        strategy.exit(id = "Long Exit", from_entry = "Long", limit = TP, stop = SL)
+    if strategy.position_size < 0
+        SL := shortFixSL
+        if upperBand < SL
+            SL := upperBand
+        strategy.exit(id = "Short Exit", from_entry = "Short", limit = TP, stop = SL)
+
+//TrailSL + MultiTP
+if SLTPtype == "TrailSL + MultiTP"
+    if (longCondition or shortCondition) and strategy.position_size == 0
+        TP1 := longCondition ? longTP1 : shortTP1
+        TP2 := longCondition ? longTP2 : shortTP2
+        TP3 := longCondition ? longTP3 : shortTP3
+        strategy.entry(longCondition ? "Long" : "Short", longCondition ? strategy.long : strategy.short)
+    if strategy.position_size > 0
+        SL := longFixSL
+        if lowerBand > SL
+            SL := lowerBand
+        if quantityTP == "2"            
+            strategy.exit(id = "Long Exit 1", from_entry = "Long", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 2", from_entry = "Long", limit = TP2, stop = SL)
+            strategy.exit(id = "Short Exit 1", from_entry = "Short", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 2", from_entry = "Short", limit = TP2, stop = SL)
+        if quantityTP == "3"      
+            strategy.exit(id = "Long Exit 1", from_entry = "Long", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 2", from_entry = "Long", limit = TP2, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 3", from_entry = "Long", limit = TP3, stop = SL)
+            strategy.exit(id = "Short Exit 1", from_entry = "Short", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 2", from_entry = "Short", limit = TP2, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 3", from_entry = "Short", limit = TP3, stop = SL)
+    if strategy.position_size < 0
+        SL := shortFixSL
+        if upperBand < SL
+            SL := upperBand
+        if quantityTP == "2"
+            strategy.exit(id = "Long Exit 1", from_entry = "Long", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 2", from_entry = "Long", limit = TP2, stop = SL)
+            strategy.exit(id = "Short Exit 1", from_entry = "Short", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 2", from_entry = "Short", limit = TP2, stop = SL)
+        if quantityTP == "3"
+            strategy.exit(id = "Long Exit 1", from_entry = "Long", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 2", from_entry = "Long", limit = TP2, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Long Exit 3", from_entry = "Long", limit = TP3, stop = SL)
+            strategy.exit(id = "Short Exit 1", from_entry = "Short", limit = TP1, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 2", from_entry = "Short", limit = TP2, stop = SL, qty_percent = qtyPercent)
+            strategy.exit(id = "Short Exit 3", from_entry = "Short", limit = TP3, stop = SL)
+ 
+//OnlyTrailSL
+if SLTPtype == "OnlyTrailSL"
+    if (longCondition or shortCondition) and strategy.position_size == 0
+        strategy.entry(longCondition ? "Long" : "Short", longCondition ? strategy.long : strategy.short)
+    if strategy.position_size > 0
+        SL := longFixSL
+        if lowerBand > SL
+            SL := lowerBand
+        strategy.exit(id = "Long Exit", from_entry = "Long", stop = SL)
+    if strategy.position_size < 0
+        SL := shortFixSL
+        if upperBand < SL
+            SL := upperBand
+        strategy.exit(id = "Short Exit", from_entry = "Short", stop = SL)
+
+//------------------------ОТРИСОВКА НА ГРАФИКЕ---------------------
+
+// Range Filter
+//plot(hband, "Upper Channel", color=color.red, linewidth=1)
+//plot(filt, "Middle Line", color=color.black, linewidth=1)
+//plot(lband, "Lower Channel", color=color.green, linewidth=1)
+
+// Liquidity Weighted Moving Averages
+fastPlot = plot(fastEMA, color = fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50))
+slowPlot = plot(slowEMA, color = fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50))
+fill(fastPlot, slowPlot, fastEMA, slowEMA, fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50), color.new(chart.bg_color, 80))
+
+// MACD
+//plot(macdLine, color=color.blue)
+//plot(signalLine, color=color.orange)
+//plot(histLine, color=color.red, style=plot.style_histogram)
+
+
+
+// Super Trend
+//plot(direction < 0 ? supertrend : na, "Up direction", color = color.green, style=plot.style_linebr)
+//plot(direction > 0 ? supertrend : na, "Down direction", color = color.red, style=plot.style_linebr)
+
+// Канал линейной регрессии
+//plot(reg, "Regression Line", color=color.blue, linewidth=2)
+//plot(upper, "Upper Channel", color=color.red, linewidth=1)
+//plot(lower, "Lower Channel", color=color.green, linewidth=1)
+
+//PinBar
+//bgcolor(color = pinBarLong ? color.yellow : na)
+//bgcolor(color = pinBarShort ? color.purple : na)
+
+//min/max
+//plot(lowerBand, color=color.green, linewidth = 1)
+//plot(upperBand, color=color.red,linewidth = 1)
+
+// Вход в позицию
+plot((strategy.position_size != 0) ? enter : na, style=plot.style_linebr, color=color.gray, title="Enter")
+
+// SL
+plot((strategy.position_size != 0) ? SL : na, style = plot.style_linebr,
+ color = color.purple, title = "SL"
+ )
+
+// TP
+plot((strategy.position_size != 0 and (SLTPtype == "FixSL + TP" or SLTPtype == "TrailSL + TP")) ? TP : na, 
+ style = plot.style_linebr,
+ color = color.lime, title = "TP"
+ )
+plot((strategy.position_size != 0 and (SLTPtype == "FixSL + MultiTP" or SLTPtype == "TrailSL + MultiTP")) ? TP1 : na, 
+ style = plot.style_linebr,
+ color = color.lime, title = "TP1"
+ )
+plot((strategy.position_size != 0 and (SLTPtype == "FixSL + MultiTP" or SLTPtype == "TrailSL + MultiTP")) ? TP2 : na, 
+ style = plot.style_linebr,
+ color = color.lime, title = "TP2"
+ )
+plot((strategy.position_size != 0 and (SLTPtype == "FixSL + MultiTP" or SLTPtype == "TrailSL + MultiTP" and quantityTP == "3")) ? TP3 : na, 
+ style = plot.style_linebr,
+ color = color.lime, title = "TP3"
+ )
+
+
