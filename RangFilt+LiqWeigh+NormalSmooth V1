@@ -121,14 +121,6 @@ if bar_index > inpSlowPeriod
     
     val := val[1] + alphasm * (nval - val[1])
     sig := sig[1] + alphasig * (val - sig[1])
-//
-//plot(val, color=val>val[1]?green:red, style=plot.style_line, linewidth=2, title="Reg smooth MACD")
-//plot(sig, color=black, style=plot.style_cross, linewidth=1, title="Signal line")
-//hline(0, title='0', color=color.gray, linestyle=hline.style_dotted, linewidth=1)
-//
-//alertcondition(ta.crossunder(val,sig),title="Sell",message="Sell")
-//alertcondition(ta.crossover(val,sig),title="Buy",message="Buy")
-//alertcondition(ta.crossunder(val,sig) or ta.crossover(val,sig) ,title="Sell/Buy",message="Sell/Buy")
 
 //------------------------РАСЧЕТЫ ВХОД/SL/TP---------------------
 
@@ -139,42 +131,69 @@ rangeFilter = input.bool(true, title = "Range Filter", group = settings2)
 LWMA = input.bool(true, title = "Liquidity Weighted Moving Averages", group = settings2)
 nsMACD = input.bool(true, title = "Normalized Smooted MACD", group = settings2)
 
+directionPosition = input.string(title = "Направление позиции", defval = "В обе стороны", 
+ options = ["В обе стороны", "Только Long", "Только Short"], 
+ group = settings2
+ )
+overturn = input.bool(false, title = "Переворот логики входа", group = settings2)
+
 bool longCondition = false
 bool shortCondition = false
 
-if rangeFilter == true
+if rangeFilter == true and overturn == false
     longCondition := longCond and CondIni[1] == -1
     shortCondition := shortCond and CondIni[1] == 1
+if rangeFilter == true and overturn == true
+    shortCondition := longCond and CondIni[1] == -1
+    longCondition := shortCond and CondIni[1] == 1
 
-if LWMA == true
+if LWMA == true and overturn == false
     longCondition := fastEMA > slowEMA and close > fastEMA
     shortCondition := fastEMA < slowEMA and close < fastEMA
+if LWMA == true and overturn == true
+    shortCondition := fastEMA > slowEMA and close > fastEMA
+    longCondition := fastEMA < slowEMA and close < fastEMA
 
-if nsMACD == true
+if nsMACD == true and overturn == false
     longCondition := val > val[1]
     shortCondition := val < val[1]
+if nsMACD == true and overturn == true
+    shortCondition := val > val[1]
+    longCondition := val < val[1]
 
-if rangeFilter == true and LWMA == true
+if rangeFilter == true and LWMA == true and overturn == false
     longCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA
     shortCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA
+if rangeFilter == true and LWMA == true and overturn == true
+    shortCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA
+    longCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA
 
-if rangeFilter == true and nsMACD == true
+if rangeFilter == true and nsMACD == true and overturn == false
     longCondition := longCond and CondIni[1] == -1 and val > val[1]
     shortCondition := shortCond and CondIni[1] == 1 and val < val[1]
+if rangeFilter == true and nsMACD == true and overturn == true
+    shortCondition := longCond and CondIni[1] == -1 and val > val[1]
+    longCondition := shortCond and CondIni[1] == 1 and val < val[1]
 
-if LWMA == true and nsMACD == true
+if LWMA == true and nsMACD == true and overturn == false
     longCondition := fastEMA > slowEMA and close > fastEMA and val > val[1]
     shortCondition := fastEMA < slowEMA and close < fastEMA and val < val[1]
+if LWMA == true and nsMACD == true and overturn == true
+    shortCondition := fastEMA > slowEMA and close > fastEMA and val > val[1]
+    longCondition := fastEMA < slowEMA and close < fastEMA and val < val[1]
 
-if rangeFilter == true and LWMA == true and nsMACD == true
+if rangeFilter == true and LWMA == true and nsMACD == true and overturn == false
     longCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA and val > val[1]
     shortCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA and val < val[1]
+if rangeFilter == true and LWMA == true and nsMACD == true and overturn == true
+    shortCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA and val > val[1]
+    longCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA and val < val[1]
 
-//Переворот логики входа
-overturn = input.bool(false, title = "Переворот логики входа", group = settings2)
-if overturn == true
-    longCondition := shortCondition
-    shortCondition := longCondition
+//Выбор направления
+if directionPosition == "Только Long"
+    shortCondition := false
+if directionPosition == "Только Short"
+    longCondition := false
     
 //------ Расчеты SL и TP
 
@@ -228,7 +247,6 @@ longTP3 = close + (close - longFixSL) * riskReward * 3
 shortTP1 = close - (shortFixSL - close) * riskReward
 shortTP2 = close - (shortFixSL - close) * riskReward * 2
 shortTP3 = close - (shortFixSL - close) * riskReward * 3
-
 
 //------------------------УПРАВЛЕНИЕ ПОЗИЦИЕЙ---------------------
 
@@ -336,39 +354,10 @@ if SLTPtype == "OnlyTrailSL"
 
 //------------------------ОТРИСОВКА НА ГРАФИКЕ---------------------
 
-// Range Filter
-//plot(hband, "Upper Channel", color=color.red, linewidth=1)
-//plot(filt, "Middle Line", color=color.black, linewidth=1)
-//plot(lband, "Lower Channel", color=color.green, linewidth=1)
-
 // Liquidity Weighted Moving Averages
 fastPlot = plot(fastEMA, color = fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50))
 slowPlot = plot(slowEMA, color = fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50))
 fill(fastPlot, slowPlot, fastEMA, slowEMA, fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50), color.new(chart.bg_color, 80))
-
-// MACD
-//plot(macdLine, color=color.blue)
-//plot(signalLine, color=color.orange)
-//plot(histLine, color=color.red, style=plot.style_histogram)
-
-
-
-// Super Trend
-//plot(direction < 0 ? supertrend : na, "Up direction", color = color.green, style=plot.style_linebr)
-//plot(direction > 0 ? supertrend : na, "Down direction", color = color.red, style=plot.style_linebr)
-
-// Канал линейной регрессии
-//plot(reg, "Regression Line", color=color.blue, linewidth=2)
-//plot(upper, "Upper Channel", color=color.red, linewidth=1)
-//plot(lower, "Lower Channel", color=color.green, linewidth=1)
-
-//PinBar
-//bgcolor(color = pinBarLong ? color.yellow : na)
-//bgcolor(color = pinBarShort ? color.purple : na)
-
-//min/max
-//plot(lowerBand, color=color.green, linewidth = 1)
-//plot(upperBand, color=color.red,linewidth = 1)
 
 // Вход в позицию
 plot((strategy.position_size != 0) ? enter : na, style=plot.style_linebr, color=color.gray, title="Enter")
@@ -395,5 +384,3 @@ plot((strategy.position_size != 0 and (SLTPtype == "FixSL + MultiTP" or SLTPtype
  style = plot.style_linebr,
  color = color.lime, title = "TP3"
  )
-
-
