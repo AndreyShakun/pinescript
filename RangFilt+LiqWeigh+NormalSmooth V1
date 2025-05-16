@@ -189,11 +189,15 @@ if rangeFilter == true and LWMA == true and nsMACD == true and overturn == true
     shortCondition := longCond and CondIni[1] == -1 and fastEMA > slowEMA and close > fastEMA and val > val[1]
     longCondition := shortCond and CondIni[1] == 1 and fastEMA < slowEMA and close < fastEMA and val < val[1]
 
-//Выбор направления
+//Переворот логики входа
+//overturn = input.bool(false, title = "Переворот логики входа", group = settings2)
 if directionPosition == "Только Long"
     shortCondition := false
 if directionPosition == "Только Short"
     longCondition := false
+//if overturn == true
+    //longCondition := shortCondition
+    //shortCondition := longCondition
     
 //------ Расчеты SL и TP
 
@@ -230,7 +234,7 @@ upperBandForTrail = upperBand < prevUpperBand or close[1] > prevUpperBand ? uppe
 
 // ------ Fix SL
 longFixSL = lowerBand - lowerBand * (reserveSL - 1)
-shortFixSL = upperBand + lowerBand * (reserveSL - 1)
+shortFixSL = upperBand + upperBand * (reserveSL - 1)
 
 // ------ Trail Stop Stop Loss and Take Profit Calculations
 longTrailSL = lowerBandForTrail
@@ -247,6 +251,7 @@ longTP3 = close + (close - longFixSL) * riskReward * 3
 shortTP1 = close - (shortFixSL - close) * riskReward
 shortTP2 = close - (shortFixSL - close) * riskReward * 2
 shortTP3 = close - (shortFixSL - close) * riskReward * 3
+
 
 //------------------------УПРАВЛЕНИЕ ПОЗИЦИЕЙ---------------------
 
@@ -354,10 +359,39 @@ if SLTPtype == "OnlyTrailSL"
 
 //------------------------ОТРИСОВКА НА ГРАФИКЕ---------------------
 
+// Range Filter
+//plot(hband, "Upper Channel", color=color.red, linewidth=1)
+//plot(filt, "Middle Line", color=color.black, linewidth=1)
+//plot(lband, "Lower Channel", color=color.green, linewidth=1)
+
 // Liquidity Weighted Moving Averages
 fastPlot = plot(fastEMA, color = fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50))
 slowPlot = plot(slowEMA, color = fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50))
 fill(fastPlot, slowPlot, fastEMA, slowEMA, fastEMA > slowEMA ? color.new(#00ffbb, 50) : color.new(#ff1100, 50), color.new(chart.bg_color, 80))
+
+// MACD
+//plot(macdLine, color=color.blue)
+//plot(signalLine, color=color.orange)
+//plot(histLine, color=color.red, style=plot.style_histogram)
+
+
+
+// Super Trend
+//plot(direction < 0 ? supertrend : na, "Up direction", color = color.green, style=plot.style_linebr)
+//plot(direction > 0 ? supertrend : na, "Down direction", color = color.red, style=plot.style_linebr)
+
+// Канал линейной регрессии
+//plot(reg, "Regression Line", color=color.blue, linewidth=2)
+//plot(upper, "Upper Channel", color=color.red, linewidth=1)
+//plot(lower, "Lower Channel", color=color.green, linewidth=1)
+
+//PinBar
+//bgcolor(color = pinBarLong ? color.yellow : na)
+//bgcolor(color = pinBarShort ? color.purple : na)
+
+//min/max
+//plot(lowerBand, color=color.green, linewidth = 1)
+//plot(upperBand, color=color.red,linewidth = 1)
 
 // Вход в позицию
 plot((strategy.position_size != 0) ? enter : na, style=plot.style_linebr, color=color.gray, title="Enter")
